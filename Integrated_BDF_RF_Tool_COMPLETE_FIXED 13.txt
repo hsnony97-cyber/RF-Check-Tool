@@ -24,6 +24,7 @@ import pandas as pd
 from pyNastran.bdf.bdf import BDF
 from pyNastran.op2.op2 import OP2
 import numpy as np
+from datetime import datetime
 
 
 class IntegratedBDFRFTool:
@@ -3768,12 +3769,16 @@ class IntegratedBDFRFTool:
     def rf_export_allowable_check(self):
         """Export allowable check CSV showing which elements/properties are included/excluded."""
         try:
-            # Get the allowable file path to determine output directory
-            allowable_path = self.allowable_path.get()
-            if not allowable_path:
-                return
+            # Use output folder for export
+            output_dir = self.rf_output_folder.get()
+            if not output_dir or not os.path.exists(output_dir):
+                # Fallback to allowable file directory
+                allowable_path = self.allowable_path.get()
+                if allowable_path:
+                    output_dir = os.path.dirname(allowable_path)
+                else:
+                    return
 
-            output_dir = os.path.dirname(allowable_path)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = os.path.join(output_dir, f"allowable_check_{timestamp}.csv")
 
