@@ -3753,6 +3753,9 @@ class IntegratedBDFRFTool:
                     foreground="green"
                 )
 
+            # Export allowable check CSV
+            self.rf_export_allowable_check()
+
             self.rf_update_progress(100, "Done")
             
         except Exception as e:
@@ -3762,6 +3765,98 @@ class IntegratedBDFRFTool:
             self.allowable_status.config(text=f"Error: {e}", foreground="red")
             messagebox.showerror("Error", str(e))
     
+    def rf_export_allowable_check(self):
+        """Export allowable check CSV showing which elements/properties are included/excluded."""
+        try:
+            # Get the allowable file path to determine output directory
+            allowable_path = self.allowable_path.get()
+            if not allowable_path:
+                return
+
+            output_dir = os.path.dirname(allowable_path)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(output_dir, f"allowable_check_{timestamp}.csv")
+
+            check_data = []
+
+            # Property-based fits
+            if hasattr(self, 'allowable_interp') and self.allowable_interp:
+                for pid, fit_info in self.allowable_interp.items():
+                    status = "EXCLUDED" if fit_info.get('excluded', False) else "INCLUDED"
+
+                    # Determine exclusion reason
+                    if fit_info.get('excluded', False):
+                        if fit_info.get('n_pts', 0) < int(self.min_data_points_var.get()):
+                            reason = f"Insufficient data points ({fit_info.get('n_pts', 0)} < {self.min_data_points_var.get()})"
+                        elif fit_info.get('r2', 0) < float(self.r2_threshold_var.get()):
+                            reason = f"Low R² ({fit_info.get('r2', 0):.4f} < {self.r2_threshold_var.get()})"
+                        else:
+                            reason = "Fit failed"
+                    else:
+                        reason = "Valid power law fit"
+
+                    formula = f"Allow = {fit_info.get('a', 0):.4f} × T^({fit_info.get('b', 0):.4f})" if fit_info.get('b', 0) != 0 else f"Allow = {fit_info.get('a', 0):.4f} (constant)"
+
+                    check_data.append({
+                        'Type': 'Property',
+                        'ID': pid,
+                        'Status': status,
+                        'Reason': reason,
+                        'a': fit_info.get('a', 0),
+                        'b': fit_info.get('b', 0),
+                        'R2': fit_info.get('r2', 0),
+                        'Data_Points': fit_info.get('n_pts', 0),
+                        'Formula': formula
+                    })
+
+            # Element-based fits
+            if hasattr(self, 'allowable_elem_interp') and self.allowable_elem_interp:
+                for elem_id, fit_info in self.allowable_elem_interp.items():
+                    status = "EXCLUDED" if fit_info.get('excluded', False) else "INCLUDED"
+
+                    # Determine exclusion reason
+                    if fit_info.get('excluded', False):
+                        if fit_info.get('n_pts', 0) < int(self.min_data_points_var.get()):
+                            reason = f"Insufficient data points ({fit_info.get('n_pts', 0)} < {self.min_data_points_var.get()})"
+                        elif fit_info.get('r2', 0) < float(self.r2_threshold_var.get()):
+                            reason = f"Low R² ({fit_info.get('r2', 0):.4f} < {self.r2_threshold_var.get()})"
+                        else:
+                            reason = "Fit failed"
+                    else:
+                        reason = "Valid power law fit"
+
+                    formula = f"Allow = {fit_info.get('a', 0):.4f} × T^({fit_info.get('b', 0):.4f})" if fit_info.get('b', 0) != 0 else f"Allow = {fit_info.get('a', 0):.4f} (constant)"
+
+                    check_data.append({
+                        'Type': 'Element',
+                        'ID': elem_id,
+                        'Property': fit_info.get('property', ''),
+                        'Status': status,
+                        'Reason': reason,
+                        'a': fit_info.get('a', 0),
+                        'b': fit_info.get('b', 0),
+                        'R2': fit_info.get('r2', 0),
+                        'Data_Points': fit_info.get('n_pts', 0),
+                        'Formula': formula
+                    })
+
+            if check_data:
+                check_df = pd.DataFrame(check_data)
+                # Reorder columns
+                col_order = ['Type', 'ID', 'Property', 'Status', 'Reason', 'a', 'b', 'R2', 'Data_Points', 'Formula']
+                col_order = [c for c in col_order if c in check_df.columns]
+                check_df = check_df[col_order]
+
+                check_df.to_csv(output_file, index=False)
+                self.rf_log(f"\n✓ Allowable check exported: {output_file}")
+                self.rf_log(f"  - Total entries: {len(check_data)}")
+                included_count = sum(1 for d in check_data if d['Status'] == 'INCLUDED')
+                excluded_count = sum(1 for d in check_data if d['Status'] == 'EXCLUDED')
+                self.rf_log(f"  - Included: {included_count}, Excluded: {excluded_count}")
+
+        except Exception as e:
+            self.rf_log(f"\nWarning: Could not export allowable check: {e}")
+
     def _process_new_allowable_format(self, df):
         """Process NEW format with Element_Type."""
         self.rf_log("  Processing NEW format...")
