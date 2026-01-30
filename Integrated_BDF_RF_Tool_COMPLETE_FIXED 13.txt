@@ -3763,6 +3763,9 @@ class IntegratedBDFRFTool:
             # Export allowable check CSV
             self.rf_export_allowable_check()
 
+            # Export element type detail CSV (each element + each element type)
+            self.rf_export_element_type_detail(df_full_elements, r2_threshold, min_data_pts)
+
             self.rf_update_progress(100, "Done")
             
         except Exception as e:
@@ -3868,6 +3871,131 @@ class IntegratedBDFRFTool:
 
         except Exception as e:
             self.rf_log(f"\nWarning: Could not export allowable check: {e}")
+
+    def rf_export_element_type_detail(self, df_full_elements, r2_threshold, min_data_pts):
+        """Export detailed CSV showing fit results for each Element + Element_Type combination."""
+        try:
+            # Use output folder for export
+            output_dir = self.rf_output_folder.get()
+            if not output_dir or not os.path.exists(output_dir):
+                allowable_path = self.allowable_path.get()
+                if allowable_path:
+                    output_dir = os.path.dirname(allowable_path)
+                else:
+                    return
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(output_dir, f"element_type_detail_{timestamp}.csv")
+
+            if df_full_elements is None or 'Element_Type' not in df_full_elements.columns:
+                self.rf_log("\nNo Element_Type data available for detailed export")
+                return
+
+            detail_data = []
+            df_elem = df_full_elements.copy()
+            df_elem['Thickness'] = pd.to_numeric(df_elem['Thickness'], errors='coerce')
+            df_elem['Allowable'] = pd.to_numeric(df_elem['Allowable'], errors='coerce')
+            df_elem['Element_ID'] = pd.to_numeric(df_elem['Element_ID'], errors='coerce')
+            df_elem['Property'] = pd.to_numeric(df_elem['Property'], errors='coerce')
+            df_elem = df_elem.dropna(subset=['Element_ID', 'Thickness', 'Allowable'])
+
+            elements = df_elem['Element_ID'].unique()
+
+            for elem_id in elements:
+                elem_int = int(elem_id)
+                elem_data = df_elem[df_elem['Element_ID'] == elem_id].copy()
+                elem_pid = elem_data['Property'].iloc[0] if len(elem_data) > 0 else None
+                elem_pid_int = int(elem_pid) if pd.notna(elem_pid) else None
+
+                # Get all unique Element_Types for this element
+                if 'Element_Type' in elem_data.columns:
+                    element_types = elem_data['Element_Type'].dropna().unique()
+                else:
+                    element_types = [None]
+
+                for elem_type in element_types:
+                    # Filter by this Element_Type
+                    if elem_type is not None:
+                        type_data = elem_data[elem_data['Element_Type'] == elem_type].copy()
+                    else:
+                        type_data = elem_data.copy()
+
+                    # Get min allowable per thickness
+                    fit_data = []
+                    for t in sorted(type_data['Thickness'].unique()):
+                        t_data = type_data[type_data['Thickness'] == t]
+                        min_allow = t_data['Allowable'].min()
+                        fit_data.append({'Thickness': float(t), 'Allowable': float(min_allow)})
+
+                    fit_df = pd.DataFrame(fit_data)
+                    n_pts = len(fit_df)
+
+                    # Fit power law
+                    if n_pts < min_data_pts:
+                        avg = fit_df['Allowable'].mean() if len(fit_df) > 0 else 0
+                        status = "EXCLUDED"
+                        reason = f"Insufficient data points ({n_pts} < {min_data_pts})"
+                        a, b, r2 = avg, 0, 0
+                    else:
+                        try:
+                            x = fit_df['Thickness'].values.astype(float)
+                            y = fit_df['Allowable'].values.astype(float)
+                            valid_mask = (x > 0) & (y > 0)
+                            x, y = x[valid_mask], y[valid_mask]
+
+                            if len(x) < 2:
+                                status = "EXCLUDED"
+                                reason = f"Insufficient valid data ({len(x)} < 2)"
+                                a, b, r2 = np.mean(y) if len(y) > 0 else 0, 0, 0
+                            else:
+                                log_x, log_y = np.log(x), np.log(y)
+                                coeffs = np.polyfit(log_x, log_y, 1)
+                                b, log_a = coeffs[0], coeffs[1]
+                                a = np.exp(log_a)
+
+                                y_pred = a * (x ** b)
+                                ss_res = np.sum((y - y_pred) ** 2)
+                                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                                r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+
+                                if r2 < r2_threshold:
+                                    status = "EXCLUDED"
+                                    reason = f"Low R² ({r2:.4f} < {r2_threshold})"
+                                    a, b = np.mean(y), 0
+                                else:
+                                    status = "INCLUDED"
+                                    reason = "Valid power law fit"
+                        except Exception as e:
+                            status = "EXCLUDED"
+                            reason = f"Fit error: {str(e)}"
+                            a, b, r2 = 0, 0, 0
+
+                    formula = f"Allow = {a:.4f} × T^({b:.4f})" if b != 0 else f"Allow = {a:.4f} (constant)"
+
+                    detail_data.append({
+                        'Bar_Element_ID': elem_int,
+                        'Bar_Property_ID': elem_pid_int,
+                        'Bar_Element_Type': elem_type if elem_type else '',
+                        'Status': status,
+                        'Reason': reason,
+                        'a': a,
+                        'b': b,
+                        'R2': r2,
+                        'Data_Points': n_pts,
+                        'Formula': formula
+                    })
+
+            if detail_data:
+                detail_df = pd.DataFrame(detail_data)
+                detail_df.to_csv(output_file, index=False)
+                self.rf_log(f"\n✓ Element type detail exported: {output_file}")
+                self.rf_log(f"  - Total rows: {len(detail_data)}")
+                included = sum(1 for d in detail_data if d['Status'] == 'INCLUDED')
+                excluded = sum(1 for d in detail_data if d['Status'] == 'EXCLUDED')
+                self.rf_log(f"  - Included: {included}, Excluded: {excluded}")
+
+        except Exception as e:
+            self.rf_log(f"\nWarning: Could not export element type detail: {e}")
 
     def _process_new_allowable_format(self, df):
         """Process NEW format with Element_Type."""
