@@ -3753,8 +3753,19 @@ class IntegratedBDFRFTool:
                     foreground="green"
                 )
 
+            # =========================================================
+            # EXPORT ALLOWABLE INFO CSV
+            # =========================================================
+            self._export_allowable_info_csv(
+                valid_props, excluded_r2, excluded_data,
+                valid_elems if df_full_elements is not None else [],
+                excluded_elem_r2 if df_full_elements is not None else [],
+                excluded_elem_data if df_full_elements is not None else [],
+                r2_threshold, min_data_pts
+            )
+
             self.rf_update_progress(100, "Done")
-            
+
         except Exception as e:
             self.rf_log(f"\nError: {e}")
             import traceback
@@ -3800,7 +3811,138 @@ class IntegratedBDFRFTool:
         
         self.rf_log(f"  Processed: {len(properties)} properties -> {len(result_data)} data points")
         return pd.DataFrame(result_data)
-    
+
+    def _export_allowable_info_csv(self, valid_props, excluded_r2, excluded_data,
+                                    valid_elems, excluded_elem_r2, excluded_elem_data,
+                                    r2_threshold, min_data_pts):
+        """Export allowable fit info to CSV files in output folder."""
+        out_dir = self.output_folder.get()
+        if not out_dir:
+            self.rf_log("\nNo output folder set - skipping info CSV export")
+            return
+
+        try:
+            # =========================================================
+            # PROPERTY INFO CSV
+            # =========================================================
+            prop_rows = []
+
+            # Valid properties
+            for pid in valid_props:
+                p = self.allowable_interp.get(pid, {})
+                prop_rows.append({
+                    'Property_ID': pid,
+                    'Status': 'VALID',
+                    'Reason': '-',
+                    'a_coefficient': round(p.get('a', 0), 6),
+                    'b_exponent': round(p.get('b', 0), 6),
+                    'R2': round(p.get('r2', 0), 4),
+                    'Data_Points': p.get('n_pts', 0),
+                    'Formula': f"Allow = {p.get('a', 0):.4f} × T^({p.get('b', 0):.4f})"
+                })
+
+            # Excluded due to low R²
+            for pid, r2, n_pts in excluded_r2:
+                p = self.allowable_interp.get(pid, {})
+                prop_rows.append({
+                    'Property_ID': pid,
+                    'Status': 'EXCLUDED',
+                    'Reason': f'R² < {r2_threshold} (R²={r2:.4f})',
+                    'a_coefficient': round(p.get('a', 0), 6),
+                    'b_exponent': 0,
+                    'R2': round(r2, 4),
+                    'Data_Points': n_pts,
+                    'Formula': f"Constant = {p.get('a', 0):.4f}"
+                })
+
+            # Excluded due to insufficient data
+            for pid, n_pts in excluded_data:
+                p = self.allowable_interp.get(pid, {})
+                prop_rows.append({
+                    'Property_ID': pid,
+                    'Status': 'EXCLUDED',
+                    'Reason': f'Data points < {min_data_pts} (n={n_pts})',
+                    'a_coefficient': round(p.get('a', 0), 6),
+                    'b_exponent': 0,
+                    'R2': 0,
+                    'Data_Points': n_pts,
+                    'Formula': f"Constant = {p.get('a', 0):.4f}"
+                })
+
+            # Sort by Property_ID
+            prop_rows.sort(key=lambda x: x['Property_ID'])
+
+            # Write property CSV
+            prop_csv_path = os.path.join(out_dir, 'allowable_property_info.csv')
+            prop_df = pd.DataFrame(prop_rows)
+            prop_df.to_csv(prop_csv_path, index=False)
+            self.rf_log(f"\n✓ Property info CSV: {prop_csv_path}")
+            self.rf_log(f"  - Valid: {len(valid_props)}, Excluded: {len(excluded_r2) + len(excluded_data)}")
+
+            # =========================================================
+            # ELEMENT INFO CSV
+            # =========================================================
+            if valid_elems or excluded_elem_r2 or excluded_elem_data:
+                elem_rows = []
+
+                # Valid elements
+                for elem_id in valid_elems:
+                    e = self.allowable_elem_interp.get(elem_id, {})
+                    elem_rows.append({
+                        'Element_ID': elem_id,
+                        'Property_ID': e.get('property', ''),
+                        'Status': 'VALID',
+                        'Reason': '-',
+                        'a_coefficient': round(e.get('a', 0), 6),
+                        'b_exponent': round(e.get('b', 0), 6),
+                        'R2': round(e.get('r2', 0), 4),
+                        'Data_Points': e.get('n_pts', 0),
+                        'Formula': f"Allow = {e.get('a', 0):.4f} × T^({e.get('b', 0):.4f})"
+                    })
+
+                # Excluded due to low R²
+                for elem_id, r2, n_pts in excluded_elem_r2:
+                    e = self.allowable_elem_interp.get(elem_id, {})
+                    elem_rows.append({
+                        'Element_ID': elem_id,
+                        'Property_ID': e.get('property', ''),
+                        'Status': 'EXCLUDED',
+                        'Reason': f'R² < {r2_threshold} (R²={r2:.4f})',
+                        'a_coefficient': round(e.get('a', 0), 6),
+                        'b_exponent': 0,
+                        'R2': round(r2, 4),
+                        'Data_Points': n_pts,
+                        'Formula': f"Constant = {e.get('a', 0):.4f}"
+                    })
+
+                # Excluded due to insufficient data
+                for elem_id, n_pts in excluded_elem_data:
+                    e = self.allowable_elem_interp.get(elem_id, {})
+                    elem_rows.append({
+                        'Element_ID': elem_id,
+                        'Property_ID': e.get('property', ''),
+                        'Status': 'EXCLUDED',
+                        'Reason': f'Data points < {min_data_pts} (n={n_pts})',
+                        'a_coefficient': round(e.get('a', 0), 6),
+                        'b_exponent': 0,
+                        'R2': 0,
+                        'Data_Points': n_pts,
+                        'Formula': f"Constant = {e.get('a', 0):.4f}"
+                    })
+
+                # Sort by Element_ID
+                elem_rows.sort(key=lambda x: x['Element_ID'])
+
+                # Write element CSV
+                elem_csv_path = os.path.join(out_dir, 'allowable_element_info.csv')
+                elem_df = pd.DataFrame(elem_rows)
+                elem_df.to_csv(elem_csv_path, index=False)
+                self.rf_log(f"✓ Element info CSV: {elem_csv_path}")
+                self.rf_log(f"  - Valid: {len(valid_elems)}, Excluded: {len(excluded_elem_r2) + len(excluded_elem_data)}")
+
+        except Exception as e:
+            self.rf_log(f"\nWarning: Could not export info CSV: {e}")
+
     def get_allowable_stress(self, pid, thickness):
         """Get allowable stress for property at thickness using power law."""
         pid_int = int(pid) if not isinstance(pid, int) else pid
