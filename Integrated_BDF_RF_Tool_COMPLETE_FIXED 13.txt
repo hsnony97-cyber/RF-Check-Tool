@@ -2382,8 +2382,15 @@ class IntegratedBDFRFTool:
             self.log3("Reading BDF with pyNastran...")
 
             bdf = BDF(debug=False)
-            bdf.read_bdf(self.offset_input_bdf.get(), validate=False, xref=True, 
-                        read_includes=True, encoding='latin-1')
+            bdf_path = self.offset_input_bdf.get()
+            try:
+                bdf.read_bdf(bdf_path, validate=False, xref=True,
+                            read_includes=True, encoding='latin-1')
+            except Exception:
+                self.log3("  Standard read failed, retrying with punch=True...")
+                bdf = BDF(debug=False)
+                bdf.read_bdf(bdf_path, validate=False, xref=True,
+                            read_includes=True, encoding='latin-1', punch=True)
 
             self.log3(f"  Nodes: {len(bdf.nodes)}")
             self.log3(f"  Elements: {len(bdf.elements)}")
