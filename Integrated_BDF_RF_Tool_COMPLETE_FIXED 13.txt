@@ -2384,12 +2384,12 @@ class IntegratedBDFRFTool:
             bdf = BDF(debug=False)
             bdf_path = self.offset_input_bdf.get()
             try:
-                bdf.read_bdf(bdf_path, validate=False, xref=True,
+                bdf.read_bdf(bdf_path, validate=False, xref=False,
                             read_includes=True, encoding='latin-1')
             except Exception:
                 self.log3("  Standard read failed, retrying with punch=True...")
                 bdf = BDF(debug=False)
-                bdf.read_bdf(bdf_path, validate=False, xref=True,
+                bdf.read_bdf(bdf_path, validate=False, xref=False,
                             read_includes=True, encoding='latin-1', punch=True)
 
             self.log3(f"  Nodes: {len(bdf.nodes)}")
@@ -2435,9 +2435,9 @@ class IntegratedBDFRFTool:
                                 nodes = [bdf.nodes[nid] for nid in node_ids if nid in bdf.nodes]
 
                                 if len(nodes) >= 3:
-                                    p1 = np.array(nodes[0].get_position())
-                                    p2 = np.array(nodes[1].get_position())
-                                    p3 = np.array(nodes[2].get_position())
+                                    p1 = np.array(nodes[0].xyz)
+                                    p2 = np.array(nodes[1].xyz)
+                                    p3 = np.array(nodes[2].xyz)
 
                                     v1 = p2 - p1
                                     v2 = p3 - p1
